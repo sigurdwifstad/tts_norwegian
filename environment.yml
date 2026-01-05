@@ -1,0 +1,21 @@
+name: tts
+channels:
+  - conda-forge
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch
+  - torchaudio
+  - torchvision
+  - numpy
+  - pip:
+      - soundfile
+      - jupyter
+      - transformers
+      - datasets
+      - soundfile
+      - accelerate
+      - speechbrain==0.5.16
+      - pandas

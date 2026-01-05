@@ -1,0 +1,10 @@
+# MacOS
+.DS_Store
+.idea
+
+__pycache__/
+data/
+models/
+pretrained_models/
+
+*.pt
