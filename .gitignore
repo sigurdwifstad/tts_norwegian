@@ -8,3 +8,4 @@ models/
 pretrained_models/
 
 *.pt
+*.wav

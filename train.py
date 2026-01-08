@@ -10,7 +10,10 @@ from transformers import (
 )
 from dataset import NBTaleDataset
 
-# TODO: compare vocabs of SpeechT5 and NBTale
+device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+print("Using device:", device)
+
+output_dir = "./models/speecht5_NBTale_tts_3"
 
 checkpoint = "microsoft/speecht5_tts"
 data_path = "./data"
@@ -122,16 +125,16 @@ class TTSDataCollator:
             return batch
 
 training_args = TrainingArguments(
-    output_dir="./models/speecht5_NBTale_tts",
+    output_dir=output_dir,
     per_device_train_batch_size=4,
     gradient_accumulation_steps=8,
-    learning_rate=1e-5,
-    warmup_steps=500,
-    max_steps=4000,
+    learning_rate=1e-4,
+    warmup_steps=100,
+    max_steps=500,
     fp16=torch.cuda.is_available(),
     logging_steps=25,
-    save_steps=1000,
-    eval_steps=1000,
+    save_steps=100,
+    eval_steps=100,
     report_to=["tensorboard"],
     remove_unused_columns=False,
 )
@@ -146,5 +149,5 @@ trainer = Trainer(
 if __name__ == "__main__":
     trainer.train()
     # save the model and processor
-    trainer.save_model("./models/speecht5_norwegian_tts")
-    processor.save_pretrained("./models/speecht5_norwegian_tts")
+    trainer.save_model(output_dir)
+    processor.save_pretrained(output_dir)

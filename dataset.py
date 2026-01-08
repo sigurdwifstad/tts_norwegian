@@ -16,25 +16,15 @@ class NBTaleDataset(Dataset):
     def __len__(self):
         return len(self.df)
 
-    def filter_text(self, text):
-        text = text.lower()
-        text = re.sub(r'<[^>]+>', '', text)
-        text = text.replace('æ', 'ae').replace('ø', 'oe').replace('å', 'aa')
-        return text
-
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
         wav_file = os.path.join(self.data_path, row["id"] + ".wav")
         waveform, sr = torchaudio.load(wav_file)
 
-        # resample to 16 kHz
-        if sr != 16000:
-            waveform = F.resample(waveform, sr, 16000)
+        waveform = self.audio_normalizer(waveform, sr)  # [T] (time domain waveform)
 
-        waveform = waveform.squeeze(0)  # [T]
-
-        normalized_text = self.filter_text(row["text"])
+        normalized_text = self.text_normalizer(row["text"])
         speaker = row["speaker"]
 
         processed_data = self.processor(
@@ -52,4 +42,63 @@ class NBTaleDataset(Dataset):
             "input_ids": input_ids,
             "labels": labels,  # [T, 80] per sample
             "speaker_embeddings": self.speaker_to_embedding[speaker],
+            "normalized_text": normalized_text,
         }
+
+    def audio_normalizer(self, waveform, sr):
+        if sr != 16000:
+            waveform = F.resample(waveform, sr, 16000)
+
+        # Trim silence
+        vad = torchaudio.transforms.Vad(sample_rate=16000)
+
+        # 1. Trim the front
+        trimmed_front = vad(waveform)
+
+        # 2. Reverse the audio (flip along the last dimension)
+        reversed_audio = torch.flip(trimmed_front, dims=[-1])
+
+        # 3. Trim the 'new' front (which is the original back)
+        trimmed_back_reversed = vad(reversed_audio)
+
+        # 4. Reverse back to original orientation
+        final_waveform = torch.flip(trimmed_back_reversed, dims=[-1])
+
+        return final_waveform.squeeze(0)
+
+    def text_normalizer(self, text):
+
+        text = re.sub(r'<[^>]+>', '', text)
+        text = text.replace('ø', 'oe')
+        text = text.replace('Ø', 'Oe')
+        text = text.replace('Å', 'Aa')
+        text = text.replace('å', 'aa')
+        text = text.replace('Æ', 'æ')  # lowercase æ exists in tokenizer vocab
+        text = text.replace('è', 'e')
+        text = text.replace('ë', 'e')
+        text = text.replace('ò', 'o')
+        text = text.replace('ô', 'o')
+        text = text.replace('ö', 'oe')
+        text = text.replace('ü', 'u')
+
+        # Remove unwanted characters
+        text = text.replace('\n', ' ')
+        text = text.replace('™', '')
+        text = text.replace('«', '')
+        text = text.replace('»', '')
+        text = text.replace('<', '')
+        text = text.replace('|', '')
+
+        # Normalize digits to words # TODO: are multi-digit numbers common and needs handling?
+        text = text.replace('0', 'null')
+        text = text.replace('1', 'en')
+        text = text.replace('2', 'to')
+        text = text.replace('3', 'tre')
+        text = text.replace('4', 'fire')
+        text = text.replace('5', 'fem')
+        text = text.replace('6', 'seks')
+        text = text.replace('7', 'sju')
+        text = text.replace('8', 'aatte')
+        text = text.replace('9', 'ni')
+
+        return text
