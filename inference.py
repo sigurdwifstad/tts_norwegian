@@ -1,11 +1,17 @@
 import torch
 import torchaudio
 from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan
+from dataset import text_normalizer
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+print("Using device:", device)
 
 base_path = "microsoft/speecht5_tts"
-finetune_path = "./models/speecht5_NBTale_tts_3/checkpoint-500"
+finetune_path = "models/speecht5_NBTale_tts_shure_1/checkpoint-1000"
+#finetune_path = "models/speecht5_NBTale_tts_senheiser_1/checkpoint-1000"
 
 #  Load processor from base model
 processor = SpeechT5Processor.from_pretrained(base_path)
@@ -21,15 +27,21 @@ model.eval()
 embeddings_dataset = torch.load("speaker_embeddings.pt")
 
 speaker_embeddings = torch.tensor(
-    embeddings_dataset['p1_g02_f1_1_t']
+    embeddings_dataset['p1_g02_f2_1_t']
 ).unsqueeze(0).to(device)
 
+# custom speaker embedding from your own recording
+#from speaker_to_embedding import create_custom_speaker_embedding
+#speaker_embeddings = create_custom_speaker_embedding("sigurd.wav").unsqueeze(0).to(device)
+
 # Prepare input text
-text = "Ibsens ripsbaerbusker og andre buskevekster."
-inputs = processor(text=text, return_tensors="pt").to(device)
+text = "Cathrine og Kjell bor i Elvegata i Trondheim."
+inputs = processor(text=text_normalizer(text), return_tensors="pt").to(device)
 
 # Load vocoder for waveform generation
-vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan")
+vocoder = SpeechT5HifiGan.from_pretrained(
+    "microsoft/speecht5_hifigan").to(device)
+vocoder.eval()
 
 # Generate speech
 with torch.no_grad():
@@ -39,6 +51,25 @@ with torch.no_grad():
         vocoder=vocoder
     )
 
+# TODO: How to reduce metallic feel of generated speech?
+#from noisereduce import reduce_noise
+## Reduce noise
+#speech = reduce_noise(
+#    y=speech.cpu().numpy(),
+#    sr=16000,
+#    prop_decrease=1.0,
+#    stationary=False
+#)
+#speech = torch.tensor(speech).to(device)
+
+# EQ
+#torchaudio.functional.equalizer_biquad(
+#    speech,
+#    sample_rate=16000,
+#    center_freq=3000,
+#    gain=5.0,
+#    Q=1.0
+#)
 
 # Save audio
 torchaudio.save(

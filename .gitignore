@@ -9,3 +9,4 @@ pretrained_models/
 
 *.pt
 *.wav
+*.m4a

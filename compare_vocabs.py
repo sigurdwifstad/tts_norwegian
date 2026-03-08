@@ -29,7 +29,7 @@ print("Special tokens:", special_tokens)
 
 speaker_to_embedding = torch.load("speaker_embeddings.pt")
 train_dataset = NBTaleDataset(
-    data_path="./data",
+    data_path="./data/shure_1",
     processor=processor,
     speaker_to_embedding=speaker_to_embedding,
 )

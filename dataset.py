@@ -24,7 +24,7 @@ class NBTaleDataset(Dataset):
 
         waveform = self.audio_normalizer(waveform, sr)  # [T] (time domain waveform)
 
-        normalized_text = self.text_normalizer(row["text"])
+        normalized_text = text_normalizer(row["text"])
         speaker = row["speaker"]
 
         processed_data = self.processor(
@@ -66,39 +66,41 @@ class NBTaleDataset(Dataset):
 
         return final_waveform.squeeze(0)
 
-    def text_normalizer(self, text):
+def text_normalizer(text):
 
-        text = re.sub(r'<[^>]+>', '', text)
-        text = text.replace('ø', 'oe')
-        text = text.replace('Ø', 'Oe')
-        text = text.replace('Å', 'Aa')
-        text = text.replace('å', 'aa')
-        text = text.replace('Æ', 'æ')  # lowercase æ exists in tokenizer vocab
-        text = text.replace('è', 'e')
-        text = text.replace('ë', 'e')
-        text = text.replace('ò', 'o')
-        text = text.replace('ô', 'o')
-        text = text.replace('ö', 'oe')
-        text = text.replace('ü', 'u')
+    # TODO: <sil> tokens must be included somehow.
 
-        # Remove unwanted characters
-        text = text.replace('\n', ' ')
-        text = text.replace('™', '')
-        text = text.replace('«', '')
-        text = text.replace('»', '')
-        text = text.replace('<', '')
-        text = text.replace('|', '')
+    text = re.sub(r'<[^>]+>', '', text)
+    text = text.replace('ø', 'oe')
+    text = text.replace('Ø', 'Oe')
+    text = text.replace('Å', 'Aa')
+    text = text.replace('å', 'aa')
+    text = text.replace('Æ', 'æ')  # lowercase æ exists in tokenizer vocab
+    text = text.replace('è', 'e')
+    text = text.replace('ë', 'e')
+    text = text.replace('ò', 'o')
+    text = text.replace('ô', 'o')
+    text = text.replace('ö', 'oe')
+    text = text.replace('ü', 'u')
 
-        # Normalize digits to words # TODO: are multi-digit numbers common and needs handling?
-        text = text.replace('0', 'null')
-        text = text.replace('1', 'en')
-        text = text.replace('2', 'to')
-        text = text.replace('3', 'tre')
-        text = text.replace('4', 'fire')
-        text = text.replace('5', 'fem')
-        text = text.replace('6', 'seks')
-        text = text.replace('7', 'sju')
-        text = text.replace('8', 'aatte')
-        text = text.replace('9', 'ni')
+    # Remove unwanted characters
+    text = text.replace('\n', ' ')
+    text = text.replace('™', '')
+    text = text.replace('«', '')
+    text = text.replace('»', '')
+    text = text.replace('<', '')
+    text = text.replace('|', '')
 
-        return text
+    # Normalize digits to words # TODO: are multi-digit numbers common and needs handling?
+    text = text.replace('0', 'null')
+    text = text.replace('1', 'en')
+    text = text.replace('2', 'to')
+    text = text.replace('3', 'tre')
+    text = text.replace('4', 'fire')
+    text = text.replace('5', 'fem')
+    text = text.replace('6', 'seks')
+    text = text.replace('7', 'sju')
+    text = text.replace('8', 'aatte')
+    text = text.replace('9', 'ni')
+
+    return text

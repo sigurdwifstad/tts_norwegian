@@ -9,56 +9,32 @@ from transformers import (
     TrainingArguments,
 )
 from dataset import NBTaleDataset
+from speaker_to_embedding import create_speaker_embeddings
 
-device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
 print("Using device:", device)
 
-output_dir = "./models/speecht5_NBTale_tts_3"
+output_dir = "models/speecht5_NBTale_tts_shure_1"
 
 checkpoint = "microsoft/speecht5_tts"
-data_path = "./data"
+data_path = "./data/shure_1"
 
 processor = SpeechT5Processor.from_pretrained(checkpoint)
 model = SpeechT5ForTextToSpeech.from_pretrained(checkpoint)
 
 model.config.use_cache = False
 
+# TODO: is this better?
 # Freeze encoder for stability
 #for param in model.encoder.parameters():
 #    param.requires_grad = False
 
-# ===============================
-# Speaker embeddings
-# ===============================
-from speechbrain.pretrained import EncoderClassifier
-import torchaudio
-import pandas as pd
 
-def create_speaker_embeddings(data_path):
-    df = pd.read_xml(os.path.join(data_path, "Annotation", "part_1.xml"))
-
-    spk_model = EncoderClassifier.from_hparams(
-        source="speechbrain/spkrec-xvect-voxceleb",
-        run_opts={"device": "cuda" if torch.cuda.is_available() else "cpu"}
-    )
-
-    speaker_to_embedding = {}
-
-    for speaker in df["speaker"].unique():
-        row = df[df["speaker"] == speaker].iloc[0]
-        wav_path = os.path.join(data_path, row["id"] + ".wav")
-
-        waveform, sr = torchaudio.load(wav_path)
-        if sr != 16000:
-            waveform = torchaudio.functional.resample(waveform, sr, 16000)
-
-        with torch.no_grad():
-            emb = spk_model.encode_batch(waveform)
-            emb = emb.squeeze(0).squeeze(0).cpu()
-
-        speaker_to_embedding[speaker] = emb
-
-    return speaker_to_embedding
 
 if not os.path.exists("speaker_embeddings.pt"):
     speaker_to_embedding = create_speaker_embeddings(data_path)
@@ -129,12 +105,12 @@ training_args = TrainingArguments(
     per_device_train_batch_size=4,
     gradient_accumulation_steps=8,
     learning_rate=1e-4,
-    warmup_steps=100,
-    max_steps=500,
+    warmup_steps=200,
+    max_steps=1000,
     fp16=torch.cuda.is_available(),
     logging_steps=25,
-    save_steps=100,
-    eval_steps=100,
+    save_steps=200,
+    eval_steps=200,
     report_to=["tensorboard"],
     remove_unused_columns=False,
 )
