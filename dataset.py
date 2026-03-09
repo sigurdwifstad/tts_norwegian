@@ -5,13 +5,126 @@ import os
 import torchaudio
 import torchaudio.functional as F
 import re
+import random
+from typing import Tuple
+
+class DataAugmentationPipeline:
+    """Applies data augmentation to audio waveforms during training."""
+
+    def __init__(self, augmentation_probability: float = 0.5,
+                 pitch_shift_cents: int = 50, time_stretch_range: Tuple = (0.95, 1.05),
+                 noise_factor: float = 0.005):
+        """
+        Args:
+            augmentation_probability: Probability (0-1) of applying each augmentation
+            pitch_shift_cents: Max pitch shift in cents (100 cents = 1 semitone)
+            time_stretch_range: (min, max) multipliers for time-stretching
+            noise_factor: Amplitude of Gaussian noise relative to signal RMS
+        """
+        self.augmentation_probability = augmentation_probability
+        self.pitch_shift_cents = pitch_shift_cents
+        self.time_stretch_range = time_stretch_range
+        self.noise_factor = noise_factor
+
+    def pitch_shift(self, waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
+        """Apply random pitch shift (±pitch_shift_cents)."""
+        if random.random() > self.augmentation_probability:
+            return waveform
+
+        # Pitch shift in cents: random between -pitch_shift_cents and +pitch_shift_cents
+        shift_cents = random.uniform(-self.pitch_shift_cents, self.pitch_shift_cents)
+        shift_steps = shift_cents / 100.0  # Convert cents to semitones
+
+        try:
+            # Use librosa if available for better quality
+            import librosa
+            waveform_np = waveform.numpy()
+            shifted = librosa.effects.pitch_shift(waveform_np, sr=sample_rate, n_steps=shift_steps)
+            return torch.from_numpy(shifted).float()
+        except ImportError:
+            # Fallback: use torchaudio (less smooth but functional)
+            # Create a small frequency warping using resample trick
+            shift_factor = 2 ** (shift_steps / 12.0)
+            new_sr = int(sample_rate / shift_factor)
+
+            # Resample down then up to shift pitch
+            resampled = F.resample(waveform, sample_rate, new_sr)
+            pitch_shifted = F.resample(resampled, new_sr, sample_rate)
+            return pitch_shifted
+
+    def time_stretch(self, waveform: torch.Tensor) -> torch.Tensor:
+        """Apply random time-stretching (speed change without pitch change)."""
+        if random.random() > self.augmentation_probability:
+            return waveform
+
+        stretch_factor = random.uniform(self.time_stretch_range[0], self.time_stretch_range[1])
+        original_length = len(waveform)
+
+        try:
+            # Use librosa for high-quality time-stretching
+            import librosa
+            waveform_np = waveform.numpy()
+            stretched = librosa.effects.time_stretch(waveform_np, rate=stretch_factor)
+            stretched_tensor = torch.from_numpy(stretched).float()
+        except ImportError:
+            # Fallback: simple resampling (changes pitch as well - not ideal)
+            new_length = int(len(waveform) / stretch_factor)
+            stretched_tensor = F.resample(
+                waveform.unsqueeze(0),
+                orig_freq=len(waveform),
+                new_freq=new_length
+            ).squeeze(0)
+
+        # Ensure output matches original length
+        stretched_length = len(stretched_tensor)
+        if stretched_length > original_length:
+            # Truncate if too long
+            stretched_tensor = stretched_tensor[:original_length]
+        elif stretched_length < original_length:
+            # Pad with zeros if too short
+            padding = original_length - stretched_length
+            stretched_tensor = torch.nn.functional.pad(stretched_tensor, (0, padding))
+
+        return stretched_tensor
+
+    def add_noise(self, waveform: torch.Tensor) -> torch.Tensor:
+        """Add Gaussian noise to audio."""
+        if random.random() > self.augmentation_probability:
+            return waveform
+
+        rms = torch.sqrt(torch.mean(waveform ** 2))
+        if rms < 1e-8:
+            return waveform
+
+        noise = torch.randn_like(waveform) * self.noise_factor * rms
+        noisy = waveform + noise
+
+        # Soft clipping to prevent distortion
+        noisy = torch.tanh(noisy)
+        return noisy
+
+    def __call__(self, waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
+        """Apply augmentation pipeline to waveform."""
+        # Apply augmentations in sequence
+        waveform = self.pitch_shift(waveform, sample_rate)
+        waveform = self.time_stretch(waveform)
+        waveform = self.add_noise(waveform)
+
+        return waveform
+
 
 class NBTaleDataset(Dataset):
-    def __init__(self, data_path, processor, speaker_to_embedding):
+    def __init__(self, data_path, processor, speaker_to_embedding,
+                 enable_augmentation: bool = True, augmentation_probability: float = 0.5):
         self.data_path = data_path
         self.df = pd.read_xml(os.path.join(data_path, 'Annotation', 'part_1.xml'))
         self.processor = processor
         self.speaker_to_embedding = speaker_to_embedding
+
+        # Initialize augmentation pipeline
+        self.augmentation = DataAugmentationPipeline(
+            augmentation_probability=augmentation_probability
+        ) if enable_augmentation else None
 
     def __len__(self):
         return len(self.df)
@@ -23,6 +136,10 @@ class NBTaleDataset(Dataset):
         waveform, sr = torchaudio.load(wav_file)
 
         waveform = self.audio_normalizer(waveform, sr)  # [T] (time domain waveform)
+
+        # Apply augmentation during training
+        if self.augmentation is not None:
+            waveform = self.augmentation(waveform, 16000)
 
         normalized_text = text_normalizer(row["text"])
         speaker = row["speaker"]

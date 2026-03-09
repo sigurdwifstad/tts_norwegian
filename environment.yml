@@ -22,3 +22,6 @@ dependencies:
       - tensorboard
       - sounddevice
       - soundfile
+      - librosa>=0.10.0
+      - scipy>=1.10.0
+      - pyloudnorm>=0.1.0

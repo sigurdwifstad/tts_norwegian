@@ -72,7 +72,7 @@ def create_custom_speaker_embedding(wav_path):
 
 if __name__ == "__main__":
 
-    record_voice("my_voice.wav", duration=60, sample_rate=16000)
-    embedding = create_custom_speaker_embedding("my_voice.wav")
+    record_voice("voice_recordings/my_voice.wav", duration=60, sample_rate=16000)
+    embedding = create_custom_speaker_embedding("voice_recordings/my_voice.wav")
     print("Speaker embedding shape:", embedding.shape)
     print("Speaker embedding:", embedding)

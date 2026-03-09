@@ -2,6 +2,8 @@ import torch
 import torchaudio
 from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan
 from dataset import text_normalizer
+from audio_postprocessor import AudioPostProcessor
+from audio_quality_assessment import AudioQualityAssessment
 
 if torch.cuda.is_available():
     device = torch.device("cuda")
@@ -51,31 +53,50 @@ with torch.no_grad():
         vocoder=vocoder
     )
 
-# TODO: How to reduce metallic feel of generated speech?
-#from noisereduce import reduce_noise
-## Reduce noise
-#speech = reduce_noise(
-#    y=speech.cpu().numpy(),
-#    sr=16000,
-#    prop_decrease=1.0,
-#    stationary=False
-#)
-#speech = torch.tensor(speech).to(device)
+# ============================================
+# POST-PROCESSING AND QUALITY ASSESSMENT
+# ============================================
 
-# EQ
-#torchaudio.functional.equalizer_biquad(
-#    speech,
-#    sample_rate=16000,
-#    center_freq=3000,
-#    gain=5.0,
-#    Q=1.0
-#)
+# Initialize post-processor
+post_processor = AudioPostProcessor(sample_rate=16000)
+
+# Initialize quality assessor
+quality_assessor = AudioQualityAssessment(sample_rate=16000)
+
+# Apply post-processing to reduce tinny/buzzing artifacts
+print("\nApplying post-processing filters...")
+speech_processed = post_processor.process(
+    speech,
+    remove_rumble=False,        # Remove sub-100Hz rumble
+    remove_harshness=False,      # Remove >8kHz harshness (buzzing)
+    apply_eq=False,              # Apply EQ for warmth (boost 300Hz, cut 3.5kHz)
+    apply_gating=False,         # Optional: spectral gating (can over-process)
+    denoise=False,              # Optional: denoising (set to True if background noise)
+    normalize=False,             # Normalize loudness
+    add_reverb=False            # Optional: subtle reverb (set to True for less digital sound)
+)
+
+# Assess quality before and after
+print("\nQuality Assessment:")
+print("=" * 60)
+
+metrics_before = quality_assessor.assess_quality(speech)
+print("BEFORE post-processing:")
+print(quality_assessor.quality_report(metrics_before))
+
+print("\n")
+
+metrics_after = quality_assessor.assess_quality(speech_processed)
+print("AFTER post-processing:")
+print(quality_assessor.quality_report(metrics_after))
+
+print("=" * 60)
 
 # Save audio
 torchaudio.save(
     "output.wav",
-    speech.unsqueeze(0).cpu(),
+    speech_processed.unsqueeze(0).cpu(),
     sample_rate=16000
 )
 
-print("Saved output.wav")
+print("\nSaved output.wav (post-processed)")
