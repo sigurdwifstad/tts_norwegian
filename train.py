@@ -2,14 +2,16 @@ import os
 import torch
 import numpy as np
 from dataclasses import dataclass
+from typing import Any, Dict, List, Union
 from transformers import (
     SpeechT5Processor,
     SpeechT5ForTextToSpeech,
     Trainer,
     TrainingArguments,
 )
-from dataset import NBTaleDataset
+from dataset import NBTaleDataset, PAUSE_TOKEN_SET
 from speaker_to_embedding import create_speaker_embeddings
+
 
 if torch.cuda.is_available():
     device = torch.device("cuda")
@@ -19,13 +21,21 @@ else:
     device = torch.device("cpu")
 print("Using device:", device)
 
-output_dir = "models/speecht5_NBTale_tts_shure_1"
+output_dir = "models/speecht5_NBTale_tts_shure_123"
 
 checkpoint = "microsoft/speecht5_tts"
-data_path = "./data/shure_1"
+data_path = "data/shure"
 
 processor = SpeechT5Processor.from_pretrained(checkpoint)
 model = SpeechT5ForTextToSpeech.from_pretrained(checkpoint)
+
+# Register pause tokens (<sil>, <inhale>, <exhale>, <fp>) so the model
+# can learn to produce pauses at the positions annotated in part_3 XML.
+num_added = processor.tokenizer.add_tokens(sorted(PAUSE_TOKEN_SET))
+if num_added > 0:
+    model.resize_token_embeddings(len(processor.tokenizer))
+    print(f"Added {num_added} pause tokens to tokenizer "
+          f"(new vocab size: {len(processor.tokenizer)})")
 
 model.config.use_cache = False
 
@@ -52,61 +62,75 @@ train_dataset = NBTaleDataset(
     data_path=data_path,
     processor=processor,
     speaker_to_embedding=speaker_to_embedding,
+    datasets=[1,2,3],
+    max_audio_length=1876,  # SpeechT5 positional encoding limit
 )
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Union
 
 @dataclass
 class TTSDataCollator:
-        processor: Any
+    processor: Any
+    max_length: int = None
 
-        def __call__(
-                self, features: List[Dict[str, Union[List[int], torch.Tensor]]]
-        ) -> Dict[str, torch.Tensor]:
-            input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
-            label_features = [{"input_values": feature["labels"]} for feature in features]
-            speaker_features = [feature["speaker_embeddings"] for feature in features]
+    def __call__(
+            self, features: List[Dict[str, Union[List[int], torch.Tensor]]]
+    ) -> Dict[str, torch.Tensor]:
 
-            # collate the inputs and targets into a batch
-            batch = processor.pad(
-                input_ids=input_ids, labels=label_features, return_tensors="pt"
+        if self.max_length is not None:
+            features = [
+                f for f in features
+                if len(f["labels"]) <= self.max_length
+            ]
+            if len(features) == 0:
+                raise ValueError("All samples in batch exceeded max_length. "
+                                 "Increase max_length or filter the dataset.")
+
+        input_ids = [
+            {"input_ids": feature["input_ids"]}
+            for feature in features
+        ]
+
+        label_features = [
+            {"input_values": feature["labels"]}
+            for feature in features
+        ]
+        speaker_features = [feature["speaker_embeddings"] for feature in features]
+
+        # Pad input_ids and labels separately
+        batch = processor.pad(
+            input_ids=input_ids, labels=label_features, return_tensors="pt"
+        )
+
+        batch["labels"] = batch["labels"].masked_fill(
+            batch.decoder_attention_mask.unsqueeze(-1).ne(1), -100
+        )
+
+        del batch["decoder_attention_mask"]
+
+        if model.config.reduction_factor > 1:
+            target_lengths = torch.tensor(
+                [len(feature["input_values"]) for feature in label_features]
             )
-
-            # replace padding with -100 to ignore loss correctly
-            batch["labels"] = batch["labels"].masked_fill(
-                batch.decoder_attention_mask.unsqueeze(-1).ne(1), -100
+            target_lengths = target_lengths.new(
+                [
+                    length - length % model.config.reduction_factor
+                    for length in target_lengths
+                ]
             )
+            max_length = max(target_lengths)
+            batch["labels"] = batch["labels"][:, :max_length]
 
-            # not used during fine-tuning
-            del batch["decoder_attention_mask"]
+        batch["speaker_embeddings"] = torch.tensor(np.array(speaker_features))
 
-            # round down target lengths to multiple of reduction factor
-            if model.config.reduction_factor > 1:
-                target_lengths = torch.tensor(
-                    [len(feature["input_values"]) for feature in label_features]
-                )
-                target_lengths = target_lengths.new(
-                    [
-                        length - length % model.config.reduction_factor
-                        for length in target_lengths
-                    ]
-                )
-                max_length = max(target_lengths)
-                batch["labels"] = batch["labels"][:, :max_length]
-
-            # also add in the speaker embeddings
-            batch["speaker_embeddings"] = torch.tensor(np.array(speaker_features))
-
-            return batch
+        return batch
 
 training_args = TrainingArguments(
     output_dir=output_dir,
     per_device_train_batch_size=4,
     gradient_accumulation_steps=8,
     learning_rate=1e-4,
-    warmup_steps=200,
-    max_steps=1000,
+    warmup_steps=500,
+    max_steps=2000,
     fp16=torch.cuda.is_available(),
     logging_steps=25,
     save_steps=200,
@@ -119,7 +143,7 @@ trainer = Trainer(
     model=model,
     args=training_args,
     train_dataset=train_dataset,
-    data_collator=TTSDataCollator(processor),
+    data_collator=TTSDataCollator(processor, max_length=1876),
 )
 
 if __name__ == "__main__":

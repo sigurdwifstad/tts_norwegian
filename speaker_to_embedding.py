@@ -7,7 +7,10 @@ import sounddevice as sd
 import soundfile as sf
 
 def create_speaker_embeddings(data_path):
-    df = pd.read_xml(os.path.join(data_path, "Annotation", "part_1.xml"))
+
+    df = pd.DataFrame()
+    for i in [1,2,3]:
+        df = pd.concat((df, pd.read_xml(os.path.join(data_path, "Annotation", f"part_{i}.xml"))))
 
     spk_model = EncoderClassifier.from_hparams(
         source="speechbrain/spkrec-xvect-voxceleb",
