@@ -12,6 +12,8 @@ from transformers import (
 from dataset import NBTaleDataset, PAUSE_TOKEN_SET
 from speaker_to_embedding import create_speaker_embeddings
 
+use_pause_tokens = False
+
 
 if torch.cuda.is_available():
     device = torch.device("cuda")
@@ -21,7 +23,7 @@ else:
     device = torch.device("cpu")
 print("Using device:", device)
 
-output_dir = "models/speecht5_NBTale_tts_shure_123"
+output_dir = "models/speecht5_NBTale_tts_shure_1_may"
 
 checkpoint = "microsoft/speecht5_tts"
 data_path = "data/shure"
@@ -29,13 +31,14 @@ data_path = "data/shure"
 processor = SpeechT5Processor.from_pretrained(checkpoint)
 model = SpeechT5ForTextToSpeech.from_pretrained(checkpoint)
 
-# Register pause tokens (<sil>, <inhale>, <exhale>, <fp>) so the model
-# can learn to produce pauses at the positions annotated in part_3 XML.
-num_added = processor.tokenizer.add_tokens(sorted(PAUSE_TOKEN_SET))
-if num_added > 0:
-    model.resize_token_embeddings(len(processor.tokenizer))
-    print(f"Added {num_added} pause tokens to tokenizer "
-          f"(new vocab size: {len(processor.tokenizer)})")
+if use_pause_tokens:
+    # Register pause tokens (<sil>, <inhale>, <exhale>, <fp>) so the model
+    # can learn to produce pauses at the positions annotated in part_3 XML.
+    num_added = processor.tokenizer.add_tokens(sorted(PAUSE_TOKEN_SET))
+    if num_added > 0:
+        model.resize_token_embeddings(len(processor.tokenizer))
+        print(f"Added {num_added} pause tokens to tokenizer "
+              f"(new vocab size: {len(processor.tokenizer)})")
 
 model.config.use_cache = False
 
@@ -49,8 +52,10 @@ model.config.use_cache = False
 if not os.path.exists("speaker_embeddings.pt"):
     speaker_to_embedding = create_speaker_embeddings(data_path)
     torch.save(speaker_to_embedding, "speaker_embeddings.pt")
+    print(f"Saved speaker embeddings to {speaker_to_embedding}")
 else:
     speaker_to_embedding = torch.load("speaker_embeddings.pt")
+    print(f"Loaded speaker embeddings from {speaker_to_embedding}")
 
 # sanity check
 assert next(iter(speaker_to_embedding.values())).shape[-1] == 512
@@ -62,8 +67,9 @@ train_dataset = NBTaleDataset(
     data_path=data_path,
     processor=processor,
     speaker_to_embedding=speaker_to_embedding,
-    datasets=[1,2,3],
+    datasets=[1],
     max_audio_length=1876,  # SpeechT5 positional encoding limit
+    use_pause_tokens=use_pause_tokens,
 )
 
 
@@ -129,12 +135,12 @@ training_args = TrainingArguments(
     per_device_train_batch_size=4,
     gradient_accumulation_steps=8,
     learning_rate=1e-4,
-    warmup_steps=500,
-    max_steps=2000,
+    warmup_steps=100,
+    max_steps=500,
     fp16=torch.cuda.is_available(),
     logging_steps=25,
-    save_steps=200,
-    eval_steps=200,
+    save_steps=100,
+    eval_steps=100,
     report_to=["tensorboard"],
     remove_unused_columns=False,
 )

@@ -11,8 +11,8 @@ else:
 print("Using device:", device)
 
 base_path = "microsoft/speecht5_tts"
-finetune_path = "models/speecht5_NBTale_tts_shure_1/checkpoint-1000"
-#finetune_path = "models/speecht5_NBTale_tts_shure_123/checkpoint-1400"
+#finetune_path = "models/speecht5_NBTale_tts_shure_1/checkpoint-1000"
+finetune_path = "models/speecht5_NBTale_tts_shure_1_may/checkpoint-500"
 
 # Load processor from the finetuned model dir so the extended tokenizer
 # (with pause tokens) is used.  Fall back to base if not saved there yet.
@@ -39,54 +39,65 @@ embeddings_dataset = torch.load("speaker_embeddings.pt")
 print(embeddings_dataset.keys())
 
 speaker_embeddings = torch.tensor(
-    embeddings_dataset['p1_g04_m2_4_t']
+    embeddings_dataset['g01_f1_1']
 ).unsqueeze(0).to(device)
 
 # custom speaker embedding from your own recording
-speaker_embeddings = create_custom_speaker_embedding("voice_recordings/ingvild.wav").unsqueeze(0).to(device)
-
-# Prepare input text
-text = "Jeg er en syntetisk stemme fra Finnmark."
-inputs = processor(text=text_normalizer(text), return_tensors="pt").to(device)
+#speaker_embeddings = create_custom_speaker_embedding("voice_recordings/sigurd.wav").unsqueeze(0).to(device)
 
 # Load vocoder for waveform generation
 vocoder = SpeechT5HifiGan.from_pretrained(
     "microsoft/speecht5_hifigan").to(device)
 vocoder.eval()
 
-# Generate speech
-with torch.no_grad():
-    speech = model.generate_speech(
-        inputs["input_ids"],
-        speaker_embeddings=speaker_embeddings,
-        vocoder=vocoder
+supress_noise = False
+
+# Prepare input text
+text = "Eg e veldig gira på å jobbe med taleteknologi."
+for term in text.split('. '):
+
+    inputs = processor(text=text_normalizer(term, use_pause_tokens=False), return_tensors="pt").to(device)
+
+    # Generate speech
+    with torch.no_grad():
+        speech = model.generate_speech(
+            inputs["input_ids"],
+            speaker_embeddings=speaker_embeddings,
+            vocoder=vocoder
+        )
+
+    # TODO: How to reduce metallic feel of generated speech?
+    if supress_noise:
+        from noisereduce import reduce_noise
+        # Reduce noise
+        speech = reduce_noise(
+            y=speech.cpu().numpy(),
+            sr=16000,
+            prop_decrease=1.0,
+            stationary=False
+        )
+        speech = torch.tensor(speech).to(device)
+
+    # EQ
+    #torchaudio.functional.equalizer_biquad(
+    #    speech,
+    #    sample_rate=16000,
+    #    center_freq=3000,
+    #    gain=5.0,
+    #    Q=1.0
+    #)
+
+    # Save audio
+    torchaudio.save(
+        "output.wav",
+        speech.unsqueeze(0).cpu(),
+        sample_rate=16000
     )
+    print("Saved output.wav")
 
-# TODO: How to reduce metallic feel of generated speech?
-from noisereduce import reduce_noise
-# Reduce noise
-speech = reduce_noise(
-    y=speech.cpu().numpy(),
-    sr=16000,
-    prop_decrease=1.0,
-    stationary=False
-)
-speech = torch.tensor(speech).to(device)
+    # Play audio
 
-# EQ
-#torchaudio.functional.equalizer_biquad(
-#    speech,
-#    sample_rate=16000,
-#    center_freq=3000,
-#    gain=5.0,
-#    Q=1.0
-#)
-
-# Save audio
-torchaudio.save(
-    "output.wav",
-    speech.unsqueeze(0).cpu(),
-    sample_rate=16000
-)
-
-print("Saved output.wav")
+    import sounddevice as sd
+    print("Playing audio...")
+    sd.play(speech.numpy(), samplerate=16000)
+    sd.wait()

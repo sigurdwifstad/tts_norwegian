@@ -7,8 +7,9 @@ import torch
 import torchaudio
 from transformers import SpeechT5Processor
 
-from dataset import NBTaleDataset, text_normalizer
+from dataset import NBTaleDataset, text_normalizer, trim_pauses
 from speaker_to_embedding import create_speaker_embeddings
+from train import use_pause_tokens
 
 
 def load_speaker_embeddings(embeddings_path, data_path):
@@ -50,7 +51,7 @@ def maybe_play_audio(waveform, sr, enabled):
         print(f"Audio playback skipped: {exc}")
 
 
-def print_sample(dataset, idx, play_audio=False):
+def print_sample(dataset, idx, play_audio=False, dump_debug_audio=False):
     raw = dataset.samples[idx]
     clip, sr = load_audio_clip(dataset.data_path, raw)
 
@@ -58,7 +59,7 @@ def print_sample(dataset, idx, play_audio=False):
     print(f"Index      : {idx}")
     print(f"Speaker    : {raw['speaker']}")
     print(f"Text       : {raw['text']}")
-    print(f"Normalized : {text_normalizer(raw['text'])}")
+    print(f"Normalized : {text_normalizer(raw['text'], use_pause_tokens=False)}")
     print(
         f"Time range : {raw['start']:.2f}s -> {raw['end']:.2f}s "
         f"({raw['end'] - raw['start']:.2f}s)"
@@ -71,8 +72,30 @@ def print_sample(dataset, idx, play_audio=False):
     print(f"labels shape      : {np.array(processed['labels']).shape}")
     print(f"speaker emb shape : {np.array(processed['speaker_embeddings']).shape}")
 
-    maybe_play_audio(clip, sr, play_audio)
+    # Compute the pause-trimmed version whenever this is a part_3 sample with
+    # mid-sentence pauses, so both playback and debug dump reflect what the
+    # dataloader/training actually sees (not the raw untrimmed clip).
+    playback_clip = clip
+    if "part_3" in raw["id"] and raw.get("pauses"):
+        trimmed = trim_pauses(
+            clip.unsqueeze(0), sr, raw["start"], raw["pauses"],
+            max_pause_sec=dataset.max_pause_sec, fade_ms=dataset.pause_fade_ms,
+        ).squeeze(0)
+        print(
+            f"Trimmed    : {clip.shape[0]/sr:.2f}s -> {trimmed.shape[0]/sr:.2f}s "
+            f"(removed {(clip.shape[0]-trimmed.shape[0])/sr:.2f}s of pauses)"
+        )
+        playback_clip = trimmed
 
+        if dump_debug_audio:
+            os.makedirs("debug_audio", exist_ok=True)
+            orig_path = os.path.join("debug_audio", f"sample_{idx}_original.wav")
+            trimmed_path = os.path.join("debug_audio", f"sample_{idx}_trimmed.wav")
+            torchaudio.save(orig_path, clip.unsqueeze(0).cpu(), sample_rate=sr)
+            torchaudio.save(trimmed_path, trimmed.unsqueeze(0).cpu(), sample_rate=sr)
+            print(f"Debug audio saved to {orig_path} / {trimmed_path}")
+
+    maybe_play_audio(playback_clip, sr, play_audio)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -89,6 +112,10 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--play-audio", action="store_true", help="Play each sample audio")
     parser.add_argument("--interactive", action="store_true", help="Interactive sample browser")
+    parser.add_argument(
+        "--dump-debug-audio", action="store_true",
+        help="Save original vs. pause-trimmed part_3 clips to debug_audio/ for comparison",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -118,14 +145,14 @@ def main():
     n = min(args.num_samples, len(dataset))
     indices = random.sample(range(len(dataset)), n)
     for idx in indices:
-        print_sample(dataset, idx, play_audio=args.play_audio)
+        print_sample(dataset, idx, play_audio=args.play_audio, dump_debug_audio=args.dump_debug_audio)
 
     if not args.interactive:
         return
 
     idx = 0
     print("\nInteractive mode: [n]ext, [p]rev, [j <idx>] jump, [q]uit")
-    print_sample(dataset, idx, play_audio=args.play_audio)
+    print_sample(dataset, idx, play_audio=args.play_audio, dump_debug_audio=args.dump_debug_audio)
 
     while True:
         cmd = input("cmd> ").strip().lower()
@@ -150,7 +177,7 @@ def main():
             print("Unknown command. Use n, p, j <idx>, q")
             continue
 
-        print_sample(dataset, idx, play_audio=args.play_audio)
+        print_sample(dataset, idx, play_audio=args.play_audio, dump_debug_audio=args.dump_debug_audio)
 
 
 if __name__ == "__main__":
