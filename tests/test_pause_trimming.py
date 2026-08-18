@@ -128,14 +128,14 @@ def _sample_waveform(n_samples):
 
 def test_trim_pauses_no_pauses_returns_original():
     waveform = _sample_waveform(1000)
-    out = trim_pauses(waveform, SR, 0.0, [], max_pause_sec=0.2, fade_ms=10)
+    out = trim_pauses(waveform, SR, 0.0, [], max_pause_sec=0.2, fade_ms=10, zero_cross_ms=0)
     assert torch.equal(out, waveform)
 
 
 def test_trim_pauses_short_pause_left_untouched():
     waveform = _sample_waveform(1000)
     # pause 0.3s -> 0.35s = 50ms, shorter than the 200ms cap
-    out = trim_pauses(waveform, SR, 0.0, [(0.3, 0.35)], max_pause_sec=0.2, fade_ms=10)
+    out = trim_pauses(waveform, SR, 0.0, [(0.3, 0.35)], max_pause_sec=0.2, fade_ms=10, zero_cross_ms=0)
     assert torch.equal(out, waveform)
 
 
@@ -143,7 +143,7 @@ def test_trim_pauses_caps_long_pause_and_preserves_speech():
     waveform = _sample_waveform(1000)  # 1 second @ 1000Hz
     # pause from 0.3s to 0.9s (600ms), cap at 200ms -> keep samples [300, 500),
     # drop [500, 900), keep [900, 1000)
-    out = trim_pauses(waveform, SR, 0.0, [(0.3, 0.9)], max_pause_sec=0.2, fade_ms=10)
+    out = trim_pauses(waveform, SR, 0.0, [(0.3, 0.9)], max_pause_sec=0.2, fade_ms=10, zero_cross_ms=0)
 
     expected_len = 1000 - (900 - 500)
     assert out.shape[-1] == expected_len
@@ -160,7 +160,7 @@ def test_trim_pauses_caps_long_pause_and_preserves_speech():
 def test_trim_pauses_multiple_blocks_each_capped_independently():
     waveform = _sample_waveform(2000)
     pauses = [(0.2, 0.6), (1.0, 1.5)]  # 400ms and 500ms, both > 200ms cap
-    out = trim_pauses(waveform, SR, 0.0, pauses, max_pause_sec=0.2, fade_ms=10)
+    out = trim_pauses(waveform, SR, 0.0, pauses, max_pause_sec=0.2, fade_ms=10, zero_cross_ms=0)
 
     removed = (600 - 400) + (1500 - 1200)
     assert out.shape[-1] == 2000 - removed
@@ -169,7 +169,7 @@ def test_trim_pauses_multiple_blocks_each_capped_independently():
 def test_trim_pauses_respects_nonzero_sentence_start():
     # sentence_start offset should shift absolute pause timestamps correctly
     waveform = _sample_waveform(1000)
-    out = trim_pauses(waveform, SR, 5.0, [(5.3, 5.9)], max_pause_sec=0.2, fade_ms=10)
+    out = trim_pauses(waveform, SR, 5.0, [(5.3, 5.9)], max_pause_sec=0.2, fade_ms=10, zero_cross_ms=0)
     expected_len = 1000 - (900 - 500)
     assert out.shape[-1] == expected_len
 

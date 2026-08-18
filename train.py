@@ -9,6 +9,7 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
+from transformers.trainer_utils import get_last_checkpoint
 from dataset import NBTaleDataset, PAUSE_TOKEN_SET
 from speaker_to_embedding import create_speaker_embeddings
 
@@ -23,7 +24,7 @@ else:
     device = torch.device("cpu")
 print("Using device:", device)
 
-output_dir = "models/speecht5_NBTale_tts_shure_1_may"
+output_dir = "models/speecht5_NBTale_tts_shure_123"
 
 checkpoint = "microsoft/speecht5_tts"
 data_path = "data/shure"
@@ -67,7 +68,7 @@ train_dataset = NBTaleDataset(
     data_path=data_path,
     processor=processor,
     speaker_to_embedding=speaker_to_embedding,
-    datasets=[1],
+    datasets=[1, 2, 3],
     max_audio_length=1876,  # SpeechT5 positional encoding limit
     use_pause_tokens=use_pause_tokens,
 )
@@ -136,10 +137,10 @@ training_args = TrainingArguments(
     gradient_accumulation_steps=8,
     learning_rate=1e-4,
     warmup_steps=100,
-    max_steps=500,
+    max_steps=5000,
     fp16=torch.cuda.is_available(),
     logging_steps=25,
-    save_steps=100,
+    save_steps=500,
     eval_steps=100,
     report_to=["tensorboard"],
     remove_unused_columns=False,
@@ -153,7 +154,13 @@ trainer = Trainer(
 )
 
 if __name__ == "__main__":
-    trainer.train()
+    resume_checkpoint = None
+    if os.path.isdir(output_dir):
+        resume_checkpoint = get_last_checkpoint(output_dir)
+        if resume_checkpoint is not None:
+            print(f"Resuming training from checkpoint: {resume_checkpoint}")
+
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
     # save the model and processor
     trainer.save_model(output_dir)
     processor.save_pretrained(output_dir)

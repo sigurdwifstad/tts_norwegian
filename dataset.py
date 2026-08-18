@@ -408,21 +408,22 @@ class NBTaleDataset(Dataset):
         sample = self.samples[idx]
 
         wav_file = os.path.join(self.data_path, sample["id"] + ".wav")
-        start_sec = sample["start"]
-        end_sec = sample["end"]
 
         waveform, sr = torchaudio.load(wav_file)
-
-        # Slice audio to the sentence time range
-        start_frame = int(start_sec * sr)
-        end_frame = int(end_sec * sr)
-        waveform = waveform[:, start_frame:end_frame]
 
         if sr != 16000:
             waveform = F.resample(waveform, sr, 16000)
             sr = 16000
 
         if "part_3" in sample["id"]:
+            start_sec = sample["start"]
+            end_sec = sample["end"]
+
+            # Slice audio to the sentence time range
+            start_frame = int(start_sec * sr)
+            end_frame = int(end_sec * sr)
+            waveform = waveform[:, start_frame:end_frame]
+
             waveform = trim_pauses(
                 waveform, sr, start_sec, sample.get("pauses", []),
                 max_pause_sec=self.max_pause_sec, fade_ms=self.pause_fade_ms,
