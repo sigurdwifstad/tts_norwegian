@@ -63,6 +63,11 @@ def parse_args() -> argparse.Namespace:
         help="Open the TensorBoard URL in the default browser after launch.",
     )
     parser.add_argument(
+        "--detach",
+        action="store_true",
+        help="Start TensorBoard in the background and exit immediately.",
+    )
+    parser.add_argument(
         "--tag",
         help="Optional regex filter for metric tags, e.g. 'loss|learning_rate'.",
     )
@@ -98,15 +103,43 @@ def build_tensorboard_command(logdir: Path, host: str, port: int) -> List[str]:
     ]
 
 
-def launch_tensorboard(logdir: Path, host: str, port: int, open_browser: bool) -> int:
+def launch_tensorboard(
+    logdir: Path,
+    host: str,
+    port: int,
+    open_browser: bool,
+    detach: bool = False,
+) -> int:
     command = build_tensorboard_command(logdir, host, port)
-    subprocess.Popen(command, start_new_session=True)
     url = f"http://{host}:{port}/"
-    print(f"TensorBoard started at {url}")
-    print(f"Logdir: {logdir}")
-    if open_browser:
-        webbrowser.open(url)
-    return 0
+
+    if detach:
+        subprocess.Popen(command, start_new_session=True)
+        print(f"TensorBoard started at {url}")
+        print(f"Logdir: {logdir}")
+        if open_browser:
+            webbrowser.open(url)
+        return 0
+
+    process = subprocess.Popen(command)
+    try:
+        process.wait(timeout=2)
+        return process.returncode
+    except subprocess.TimeoutExpired:
+        print(f"TensorBoard started at {url}")
+        print(f"Logdir: {logdir}")
+        if open_browser:
+            webbrowser.open(url)
+
+    try:
+        return process.wait()
+    except KeyboardInterrupt:
+        process.terminate()
+        try:
+            return process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            return process.wait()
 
 
 def discover_run_dirs(path: Path) -> List[Path]:
@@ -358,7 +391,13 @@ def main() -> int:
         except FileNotFoundError as exc:
             print(exc, file=sys.stderr)
             return 1
-        return launch_tensorboard(target_path, args.host, args.port, args.open_browser)
+        return launch_tensorboard(
+            target_path,
+            args.host,
+            args.port,
+            args.open_browser,
+            detach=args.detach,
+        )
 
     try:
         run_dirs = discover_run_dirs(target_path)

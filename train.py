@@ -1,4 +1,6 @@
 import os
+import json
+import re
 import torch
 import numpy as np
 from dataclasses import dataclass
@@ -24,7 +26,7 @@ else:
     device = torch.device("cpu")
 print("Using device:", device)
 
-output_dir = "models/speecht5_NBTale_tts_shure_123"
+output_dir = "models/speecht5_NBTale_tts_shure_1_august"
 
 checkpoint = "microsoft/speecht5_tts"
 data_path = "data/shure"
@@ -61,6 +63,8 @@ else:
 # sanity check
 assert next(iter(speaker_to_embedding.values())).shape[-1] == 512
 
+# TODO: add option for filtering away dataset 2 (non-native) speakers from dataset 3
+
 # ===============================
 # Dataset
 # ===============================
@@ -68,7 +72,7 @@ train_dataset = NBTaleDataset(
     data_path=data_path,
     processor=processor,
     speaker_to_embedding=speaker_to_embedding,
-    datasets=[1, 2, 3],
+    datasets=[1],
     max_audio_length=1876,  # SpeechT5 positional encoding limit
     use_pause_tokens=use_pause_tokens,
 )
@@ -136,11 +140,11 @@ training_args = TrainingArguments(
     per_device_train_batch_size=4,
     gradient_accumulation_steps=8,
     learning_rate=1e-4,
-    warmup_steps=100,
-    max_steps=5000,
+    warmup_steps=0,#100,
+    max_steps=10000,
     fp16=torch.cuda.is_available(),
     logging_steps=25,
-    save_steps=500,
+    save_steps=1000,
     eval_steps=100,
     report_to=["tensorboard"],
     remove_unused_columns=False,
@@ -153,11 +157,46 @@ trainer = Trainer(
     data_collator=TTSDataCollator(processor, max_length=1876),
 )
 
+
+def parse_checkpoint_step(checkpoint_dir: str) -> int:
+    match = re.search(r"checkpoint-(\d+)$", os.path.basename(checkpoint_dir))
+    if match is None:
+        raise ValueError(f"Could not parse step from checkpoint path: {checkpoint_dir}")
+    return int(match.group(1))
+
+
+def ensure_trainer_state(checkpoint_dir: str, args: TrainingArguments) -> None:
+    trainer_state_path = os.path.join(checkpoint_dir, "trainer_state.json")
+    if os.path.isfile(trainer_state_path):
+        return
+
+    checkpoint_step = parse_checkpoint_step(checkpoint_dir)
+    trainer_state = {
+        "global_step": checkpoint_step,
+        "max_steps": args.max_steps,
+        "logging_steps": args.logging_steps,
+        "eval_steps": args.eval_steps,
+        "save_steps": args.save_steps,
+        "train_batch_size": args.per_device_train_batch_size,
+        "log_history": [],
+        "stateful_callbacks": {},
+    }
+    with open(trainer_state_path, "w", encoding="utf-8") as f:
+        json.dump(trainer_state, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+    print(
+        "Checkpoint was missing trainer_state.json; "
+        f"reconstructed resume state at step {checkpoint_step}."
+    )
+
+
 if __name__ == "__main__":
     resume_checkpoint = None
     if os.path.isdir(output_dir):
         resume_checkpoint = get_last_checkpoint(output_dir)
         if resume_checkpoint is not None:
+            ensure_trainer_state(resume_checkpoint, training_args)
             print(f"Resuming training from checkpoint: {resume_checkpoint}")
 
     trainer.train(resume_from_checkpoint=resume_checkpoint)

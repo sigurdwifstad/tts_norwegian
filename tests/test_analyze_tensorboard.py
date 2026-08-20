@@ -1,5 +1,7 @@
 """Tests for TensorBoard training metric analysis."""
+import subprocess
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -9,6 +11,7 @@ from analyze_tensorboard import (
     build_json_payload,
     discover_run_dirs,
     filter_runs,
+    launch_tensorboard,
     load_runs,
     render_tag_list,
     render_text_summary,
@@ -83,3 +86,34 @@ def test_build_tensorboard_command_uses_localhost(tmp_path):
     assert str(tmp_path) in command
     assert "--host" in command
     assert "127.0.0.1" in command
+
+
+def test_launch_tensorboard_waits_for_foreground_process(tmp_path):
+    process = Mock()
+    command = build_tensorboard_command(tmp_path, "127.0.0.1", 6006)
+    process.wait.side_effect = [subprocess.TimeoutExpired(cmd="tensorboard", timeout=2), 0]
+    with patch("analyze_tensorboard.subprocess.Popen", return_value=process) as popen:
+        exit_code = launch_tensorboard(tmp_path, "127.0.0.1", 6006, open_browser=False)
+
+    assert exit_code == 0
+    popen.assert_called_once_with(command)
+    process.wait.assert_any_call(timeout=2)
+    assert process.wait.call_args_list[-1].kwargs == {}
+
+
+def test_launch_tensorboard_detach_keeps_background_behavior(tmp_path):
+    process = Mock()
+    with patch("analyze_tensorboard.subprocess.Popen", return_value=process) as popen:
+        exit_code = launch_tensorboard(
+            tmp_path,
+            "127.0.0.1",
+            6006,
+            open_browser=False,
+            detach=True,
+        )
+
+    assert exit_code == 0
+    popen.assert_called_once_with(
+        build_tensorboard_command(tmp_path, "127.0.0.1", 6006),
+        start_new_session=True,
+    )

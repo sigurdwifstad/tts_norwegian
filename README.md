@@ -15,4 +15,7 @@ python analyze_tensorboard.py models --host 127.0.0.1 --port 6006 --open-browser
 
 # console summaries still available if needed
 python analyze_tensorboard.py models --summary --tag "loss|learning_rate"
+
+# background the server and return immediately
+python analyze_tensorboard.py models --detach
 ```
